@@ -1,5 +1,5 @@
 const express = require("express")
-
+require("dotenv").config();
 // bcrypt : used to hash and compare passwords securely
 const bcrypt = require("bcryptjs");
 
@@ -8,8 +8,7 @@ const jwt = require("jsonwebtoken");
 
 
 const { intializeDatabase } = require("./db/db.connect");
-intializeDatabase();
-require("dotenv").config();
+
 
 const Team = require("./models/Team.model.js");
 const Project = require("./models/Project.model.js");
@@ -18,6 +17,14 @@ const Task = require("./models/Task.model.js");
 
 const app = express();
 app.use(express.json());
+app.use(async (req, res, next) => {
+  try {
+    await intializeDatabase();
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
 const cors = require("cors");
 
 const allowedOrigins = [
@@ -207,7 +214,4 @@ app.get("/test/tasks", async (req, res) => {
   res.json(tasks);
 });
 
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on ${PORT}`);
-});
+module.exports = app;
