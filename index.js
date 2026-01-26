@@ -6,8 +6,10 @@ const bcrypt = require("bcryptjs");
 // jwtwebtoken : used to create and verify JWT tokens
 const jwt = require("jsonwebtoken");
 
-const cors = require("cors");
+
 const { intializeDatabase } = require("./db/db.connect");
+intializeDatabase();
+require("dotenv").config();
 
 const Team = require("./models/Team.model.js");
 const Project = require("./models/Project.model.js");
@@ -16,15 +18,31 @@ const Task = require("./models/Task.model.js");
 
 const app = express();
 app.use(express.json());
-const corsOptions = {
-  origin: "*",
-  credentials: true,
-  optionSuccessStatus: 200,
-};
+const cors = require("cors");
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://workasana-frontend-lake.vercel.app",
+];
 
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      // allow tools like Postman/curl (no Origin header)
+      if (!origin) return cb(null, true);
 
-app.use(cors(corsOptions));
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+
+      return cb(null, false); // or cb(new Error("Not allowed by CORS"))
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+// preflight
+app.options("*", cors());
+// Handle preflight requests
 
 
 function signToken(payload) {
@@ -148,7 +166,7 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
   if (!user) return res.status(404).json({ message: "User not found" });
   res.json({ user });
 });
-intializeDatabase();
+
 
 app.get("/",(req,res)=>{
     res.send("Backend is running")
