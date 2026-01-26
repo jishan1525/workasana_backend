@@ -47,10 +47,6 @@ app.use(
   })
 );
 
-// preflight
-app.options("/*", cors());
-// Handle preflight requests
-
 
 function signToken(payload) {
 
