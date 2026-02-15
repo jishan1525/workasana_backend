@@ -7,6 +7,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 
+
 const { intializeDatabase } = require("./db/db.connect");
 
 
@@ -17,14 +18,7 @@ const Task = require("./models/Task.model.js");
 
 const app = express();
 app.use(express.json());
-app.use(async (req, res, next) => {
-  try {
-    await intializeDatabase();
-    next();
-  } catch (e) {
-    next(e);
-  }
-});
+
 const cors = require("cors");
 
 const allowedOrigins = [
@@ -175,14 +169,122 @@ app.get("/",(req,res)=>{
     res.send("Backend is running")
 })
 
+//creating the team ( (Protected))
+app.post("/api/teams", requireAuth, async (req, res) => {
+  try {
+    const { name, description, members } = req.body;
 
+    if (!name) {
+      return res.status(400).json({ message: "Team name required" });
+    }
 
-// Create Team 
-app.post("/test/team", async (req, res) => {
-  const team = await Team.create(req.body);
+    const team = await Team.create({
+      name,
+      description,
+      members: members || [],
+      owner: req.user.userId  // 🔥 from JWT
+    });
+
+    res.status(201).json(team);
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({ message: "Team already exists" });
+    }
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// List Teams (for cards)
+app.get("/api/teams", requireAuth, async (req, res) => {
+  const teams = await Team.find({ owner: req.user.userId });
+  res.json(teams);
+});
+
+//Team Detail (for detail page)
+
+app.get("/api/teams/:id", requireAuth, async (req, res) => {
+  const team = await Team.findOne({
+    _id: req.params.id,
+    owner: req.user.userId
+  });
+
+  if (!team) {
+    return res.status(404).json({ message: "Team not found" });
+  }
+
   res.json(team);
 });
 
+//Add Member (modal action)
+
+app.post("/api/teams/:id/member", requireAuth, async (req, res) => {
+  const { memberName } = req.body;
+
+  if (!memberName || !memberName.trim()) {
+    return res.status(400).json({ message: "memberName is required" });
+  }
+
+  const cleanName = memberName.trim();
+
+  const team = await Team.findOne({
+    _id: req.params.id,
+    owner: req.user.userId
+  });
+
+  if (!team) {
+    return res.status(404).json({ message: "Team not found" });
+  }
+
+  const exists = team.members.some(
+    (m) => m.toLowerCase() === cleanName.toLowerCase()
+  );
+
+  if (exists) {
+    return res.status(409).json({ message: "Member already exists" });
+  }
+
+  team.members.push(cleanName);
+  await team.save();
+
+  res.json(team);
+});
+// delete team member
+app.delete("/api/teams/:id/member", requireAuth, async (req, res) => {
+  try {
+    const { memberName } = req.body;
+    if (!memberName || !memberName.trim()) {
+  return res.status(400).json({ message: "memberName is required" });
+}
+
+    const team = await Team.findOne({
+      _id: req.params.id,
+      owner: req.user.userId
+    });
+
+    if (!team) return res.status(404).json({ message: "Team not found" });
+
+    team.members = team.members.filter(
+      (m) => m.toLowerCase() !== memberName.trim().toLowerCase()
+    );
+
+    await team.save();
+    res.json(team);
+  } catch (err) {
+    res.status(400).json({ message: "Invalid team id" });
+  }
+});
+
+//Delete team
+app.delete("/api/teams/:id", requireAuth, async (req, res) => {
+  const deleted = await Team.findOneAndDelete({
+    _id: req.params.id,
+    owner: req.user.userId
+  });
+
+  if (!deleted) return res.status(404).json({ message: "Team not found" });
+
+  res.json({ message: "Team deleted" });
+});
 
 // Create Project
 app.post("/test/project", async (req, res) => {
@@ -209,5 +311,31 @@ app.get("/test/tasks", async (req, res) => {
 
   res.json(tasks);
 });
+
+app.get("/projects",async(req,res)=>{
+  try {
+    const projects = await Project.find();
+    if(!projects){
+      return res.status(400).json({message:"Not found"})
+    }
+    else{
+      return res.status(200).json({projects})
+    }
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+})
+const PORT = 3000;
+
+intializeDatabase()
+  .then(() => {
+    console.log("Database connected");
+    app.listen(PORT, () => {
+      console.log(`Server is running on ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("DB connection failed:", err);
+  });
 
 module.exports = app;
