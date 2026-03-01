@@ -6,9 +6,12 @@ const bcrypt = require("bcryptjs");
 // jwtwebtoken : used to create and verify JWT tokens
 const jwt = require("jsonwebtoken");
 
+const mongoose = require("mongoose");
 
 
 const { intializeDatabase } = require("./db/db.connect");
+
+
 
 
 const Team = require("./models/Team.model.js");
@@ -18,6 +21,15 @@ const Task = require("./models/Task.model.js");
 
 const app = express();
 app.use(express.json());
+
+app.use(async (req, res, next) => {
+  try {
+    await intializeDatabase();
+    next();
+  } catch (err) {
+    return res.status(500).json({ message: "Database connection failed" });
+  }
+});
 
 const cors = require("cors");
 
@@ -287,32 +299,161 @@ app.delete("/api/teams/:id", requireAuth, async (req, res) => {
 });
 
 // Create Project
-app.post("/test/project", async (req, res) => {
+app.post("/api/projects", requireAuth, async (req, res) => {
   const project = await Project.create(req.body);
-  res.json(project);
+  res.status(201).json(project);
 });
 
-// Create User (owner)
-app.post("/test/user", async (req, res) => {
-  const user = await User.create(req.body);
-  res.json(user);
+function computeDueOn(createdAt, timeToComplete) {
+  const d = new Date(createdAt);
+  d.setDate(d.getDate() + Number(timeToComplete || 0));
+  return d;
+}
+
+/**
+ * GET /api/projects/:id/tasks
+ * Optional query params:
+ *  - ownerId=USER_ID
+ *  - tag=ui
+ *  - status=To Do|In Progress|Completed|Blocked
+ *  - dueFrom=2026-02-01
+ *  - dueTo=2026-02-28
+ *  - sort=dueAsc|dueDesc|newest|oldest
+ */
+app.get("/api/projects/:id/tasks", requireAuth, async (req, res) => {
+  try {
+    const projectId = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(projectId)) {
+      return res.status(400).json({ message: "Invalid project id" });
+    }
+
+    // ensure project exists
+    const project = await Project.findById(projectId).select("_id name");
+    if (!project) return res.status(404).json({ message: "Project not found" });
+
+    const { ownerId, tag, status, dueFrom, dueTo, sort } = req.query;
+
+    const query = { project: projectId };
+
+    if (ownerId) query.owners = ownerId;
+    if (status) query.status = status;
+    if (tag) query.tags = { $in: [tag] };
+
+    // Basic fetch first (dueOn is derived, so easiest is filter in JS)
+    let tasks = await Task.find(query)
+      .populate("project", "name")
+      .populate("team", "name")
+      .populate("owners", "name email")
+      .lean();
+
+    // Add computed dueOn
+    tasks = tasks.map((t) => ({
+      ...t,
+      dueOn: computeDueOn(t.createdAt, t.timeToComplete),
+    }));
+
+    // Filter by due date range (since dueOn is computed)
+    const from = dueFrom ? new Date(dueFrom) : null;
+    const to = dueTo ? new Date(dueTo) : null;
+    if (from || to) {
+      tasks = tasks.filter((t) => {
+        const due = new Date(t.dueOn);
+        if (from && due < from) return false;
+        if (to) {
+          const end = new Date(to);
+          end.setHours(23, 59, 59, 999);
+          if (due > end) return false;
+        }
+        return true;
+      });
+    }
+
+    // Sort
+    if (sort === "dueAsc") {
+      tasks.sort((a, b) => new Date(a.dueOn) - new Date(b.dueOn));
+    } else if (sort === "dueDesc") {
+      tasks.sort((a, b) => new Date(b.dueOn) - new Date(a.dueOn));
+    } else if (sort === "newest") {
+      tasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    } else if (sort === "oldest") {
+      tasks.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    }
+
+    return res.json({ project, tasks });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
 });
 
-app.post("/test/task", async (req, res) => {
-  const task = await Task.create(req.body);
-  res.json(task);
+/**
+ * POST /api/projects/:id/tasks
+ * Body:
+ *  {
+ *    name: string,
+ *    team: TEAM_ID,
+ *    owners: [USER_ID],
+ *    tags?: [string],
+ *    timeToComplete: number,
+ *    status?: 'To Do'|'In Progress'|'Completed'|'Blocked'
+ *  }
+ */
+app.post("/api/projects/:id/tasks", requireAuth, async (req, res) => {
+  try {
+    const projectId = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(projectId)) {
+      return res.status(400).json({ message: "Invalid project id" });
+    }
+
+    // ensure project exists
+    const project = await Project.findById(projectId).select("_id name");
+    if (!project) return res.status(404).json({ message: "Project not found" });
+
+    const { name, team, owners, tags, timeToComplete, status } = req.body || {};
+
+    // validations based on your schema
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "Task name is required" });
+    }
+    if (!team) {
+      return res.status(400).json({ message: "team is required" });
+    }
+    if (!Array.isArray(owners) || owners.length === 0) {
+      return res.status(400).json({ message: "owners (array) is required" });
+    }
+    if (timeToComplete === undefined || timeToComplete === null || Number(timeToComplete) <= 0) {
+      return res.status(400).json({ message: "timeToComplete must be a positive number" });
+    }
+
+    const created = await Task.create({
+      name: name.trim(),
+      project: projectId,
+      team,
+      owners,
+      tags: Array.isArray(tags) ? tags : [],
+      timeToComplete: Number(timeToComplete),
+      status: status || "To Do",
+    });
+
+    const populated = await Task.findById(created._id)
+      .populate("project", "name")
+      .populate("team", "name")
+      .populate("owners", "name email")
+      .lean();
+
+    return res.status(201).json({
+      ...populated,
+      dueOn: computeDueOn(populated.createdAt, populated.timeToComplete),
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
 });
 
-app.get("/test/tasks", async (req, res) => {
-  const tasks = await Task.find()
-    .populate("project")
-    .populate("team")
-    .populate("owners");
 
-  res.json(tasks);
-});
 
-app.get("/projects",async(req,res)=>{
+app.get("/projects",requireAuth,async(req,res)=>{
   try {
     const projects = await Project.find();
     if(!projects){
