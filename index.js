@@ -12,8 +12,6 @@ const mongoose = require("mongoose");
 const { intializeDatabase } = require("./db/db.connect");
 
 
-
-
 const Team = require("./models/Team.model.js");
 const Project = require("./models/Project.model.js");
 const User = require("./models/User.model.js");
@@ -21,6 +19,7 @@ const Task = require("./models/Task.model.js");
 
 const app = express();
 app.use(express.json());
+const cors = require("cors");
 
 app.use(async (req, res, next) => {
   try {
@@ -31,7 +30,7 @@ app.use(async (req, res, next) => {
   }
 });
 
-const cors = require("cors");
+
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -466,17 +465,5 @@ app.get("/projects",requireAuth,async(req,res)=>{
     return res.status(500).json({ message: error.message });
   }
 })
-const PORT = 3000;
-
-intializeDatabase()
-  .then(() => {
-    console.log("Database connected");
-    app.listen(PORT, () => {
-      console.log(`Server is running on ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("DB connection failed:", err);
-  });
 
 module.exports = app;
